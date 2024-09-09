@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { genSaltSync, hashSync, compareSync } from "bcrypt";
+import CryptoJS from "crypto-js";
 import { StreamChat } from "stream-chat";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
@@ -7,14 +7,14 @@ import User from "../models/user";
 
 dotenv.config();
 
-const { STREAM_API_KEY, STREAM_API_SECRET, JWT_SECRET } = process.env;
+const { STREAM_API_KEY, STREAM_API_SECRET, JWT_SECRET, SECRET } = process.env;
 const serverClient = StreamChat.getInstance(STREAM_API_KEY!, STREAM_API_SECRET);
 
 export const authController = {
   registerUser: async (req: Request, res: Response) => {
     const { email, password, username } = req.body;
 
-    if (!email || !password || !username ) {
+    if (!email || !password || !username) {
       return res.status(400).json({ message: "All fields are required." });
     }
 
@@ -28,19 +28,18 @@ export const authController = {
     }
 
     try {
-      const salt = genSaltSync(10);
-      const hashedPassword = hashSync(password, salt);
+      // Encrypt the password using process.env.SECRET
+      const hashedPassword = CryptoJS.AES.encrypt(password, SECRET as string).toString();
 
       const newUser = new User({
         email,
         password: hashedPassword,
         username,
-        // location,
       });
 
       await newUser.save();
 
-      const userId = newUser.id.toString(); 
+      const userId = newUser.id.toString();
 
       await serverClient.upsertUser({
         id: userId,
@@ -75,12 +74,14 @@ export const authController = {
         return res.status(401).json({ message: "Wrong credentials: Invalid email." });
       }
 
-      const isPasswordValid = compareSync(password, user.password);
-      if (!isPasswordValid) {
+      // Decrypt the stored password using process.env.SECRET
+      const decryptedPassword = CryptoJS.AES.decrypt(user.password, SECRET as string).toString(CryptoJS.enc.Utf8);
+
+      if (decryptedPassword !== password) {
         return res.status(401).json({ message: "Wrong password." });
       }
 
-      const userId = user.id.toString(); 
+      const userId = user.id.toString();
 
       const appToken = jwt.sign(
         { id: userId, email: user.email },
