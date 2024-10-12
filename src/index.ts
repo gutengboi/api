@@ -96,29 +96,32 @@
 //   console.log(`Server is listening on port ${PORT}`);
 // });
 
-import express from 'express';
-import dotenv from 'dotenv';
-import mongoose from 'mongoose';
-import userRoutes from './routers/userRoutes';
-import { authController } from './controllers/authController';
+import express from "express";
+import dotenv from "dotenv";
+import mongoose from "mongoose";
+import userRoutes from "./routers/userRoutes";
+import { authController } from "./controllers/authController";
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-mongoose.connect(process.env.MONGO_URL as string)
-  .then(() => console.log('DB connected'))
-  .catch((err) => console.error('DB connection error:', err));
+mongoose
+  .connect(process.env.MONGO_URL as string)
+  .then(() => console.log("DB connected"))
+  .catch((err) => console.error("DB connection error:", err));
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 // app.use("/api/auth", authRoutes);
-app.post('/register', authController.registerUser);
+app.post("/register", authController.registerUser);
 app.post("/login", authController.loginUser);
+app.post("/forgot-password", authController.forgotPassword);
+app.post("/reset-password", authController.resetPassword);
+app.post("/verify-otp", authController.verifyOtp);
 
 app.use("/api/users", userRoutes);
-
 
 app.listen(port, () => {
   console.log(`Server is listening on port ${port}`);
