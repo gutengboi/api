@@ -4,13 +4,12 @@ import { StreamChat } from "stream-chat";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 import User from "../models/user";
-import nodemailer from "nodemailer";
-import crypto from "crypto";
-
+import ResetToken from "../models/resetToken";
+import { generateOTP, mailTransport } from "../utils/mail";
 
 dotenv.config();
 
-const { STREAM_API_KEY, STREAM_API_SECRET, JWT_SECRET, SECRET, EMAIL_USER, EMAIL_PASS } = process.env;
+const { STREAM_API_KEY, STREAM_API_SECRET, JWT_SECRET, SECRET } = process.env;
 const serverClient = StreamChat.getInstance(STREAM_API_KEY!, STREAM_API_SECRET);
 
 export const authController = {
@@ -22,7 +21,9 @@ export const authController = {
     }
 
     if (password.length < 6) {
-      return res.status(400).json({ message: "Password must be at least 6 characters." });
+      return res
+        .status(400)
+        .json({ message: "Password must be at least 6 characters." });
     }
 
     const existingUser = await User.findOne({ email }).exec();
@@ -31,40 +32,82 @@ export const authController = {
     }
 
     try {
-      // Encrypt the password using process.env.SECRET
-      const hashedPassword = CryptoJS.AES.encrypt(password, SECRET as string).toString();
+      const hashedPassword = CryptoJS.AES.encrypt(
+        password,
+        SECRET as string
+      ).toString();
 
       const newUser = new User({
         email,
         password: hashedPassword,
         username,
+        isVerified: false, // Add a field to track account verification
       });
 
       await newUser.save();
 
-      const userId = newUser.id.toString();
+      const otp = generateOTP();
 
-      await serverClient.upsertUser({
-        id: userId,
-        email,
-        name: username,
+      // Store OTP in a ResetToken collection, like how it's done in password reset
+      const resetToken = new ResetToken({
+        owner: newUser._id,
+        token: otp,
+      });
+      await resetToken.save();
+
+      const transporter = mailTransport();
+      await transporter.sendMail({
+        from: '"Your App" <noreply@careNavigator.com>',
+        to: email,
+        subject: "Verify Your Email - OTP",
+        text: `Your OTP for email verification is: ${otp}.`,
+        html: `<p>Your OTP for email verification is: <b>${otp}</b>.</p>`,
       });
 
-      const appToken = jwt.sign(
-        { id: userId, email },
-        JWT_SECRET as string,
-        { expiresIn: "7d" }
-      );
-
-      const streamToken = serverClient.createToken(userId);
-
-      return res.status(201).json({
-        appToken,
-        streamToken,
-        user: { id: userId, email },
+      res.status(201).json({
+        message: "User registered. OTP sent to your email for verification.",
       });
     } catch (err) {
       res.status(500).json({ error: "User registration failed." });
+    }
+  },
+
+  verifyRegistrationOtp: async (req: Request, res: Response) => {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Email and OTP are required." });
+    }
+
+    try {
+      const user = await User.findOne({ email }).exec();
+      if (!user) {
+        return res.status(404).json({ message: "User not found." });
+      }
+
+      const resetToken = await ResetToken.findOne({ owner: user._id }).exec();
+      if (!resetToken) {
+        return res
+          .status(400)
+          .json({ message: "No OTP found or it has already been used." });
+      }
+
+      const isValidOtp = await resetToken.compareToken(otp);
+      if (!isValidOtp) {
+        return res.status(400).json({ message: "Invalid OTP." });
+      }
+
+      // Mark user as verified
+      user.isVerified = true;
+      await user.save();
+
+      await ResetToken.findByIdAndDelete(resetToken._id);
+
+      res
+        .status(200)
+        .json({ message: "OTP verified, user registration complete." });
+    } catch (err) {
+      res.status(500).json({ error: "OTP verification failed." });
     }
   },
 
@@ -74,33 +117,46 @@ export const authController = {
     try {
       const user = await User.findOne({ email }).exec();
       if (!user) {
-        return res.status(401).json({ message: "Wrong credentials: Invalid email." });
+        return res
+          .status(401)
+          .json({ message: "Wrong credentials: Invalid email." });
       }
 
-      // Decrypt the stored password using process.env.SECRET
-      const decryptedPassword = CryptoJS.AES.decrypt(user.password, SECRET as string).toString(CryptoJS.enc.Utf8);
+      if (!user.isVerified) {
+        return res.status(403).json({ message: "Account is not verified." });
+      }
+
+      const decryptedPassword = CryptoJS.AES.decrypt(
+        user.password,
+        SECRET as string
+      ).toString(CryptoJS.enc.Utf8);
+
+      console.log("Decrypted Password:", decryptedPassword);
+      console.log("User entered password:", password);
 
       if (decryptedPassword !== password) {
         return res.status(401).json({ message: "Wrong password." });
       }
 
       const userId = user.id.toString();
-
       const appToken = jwt.sign(
         { id: userId, email: user.email },
         JWT_SECRET as string,
         { expiresIn: "7d" }
       );
-
       const streamToken = serverClient.createToken(userId);
 
-      const { password: userPass, __v, createdAt, updatedAt, ...userData } = user.toObject();
+      const {
+        password: userPass,
+        __v,
+        createdAt,
+        updatedAt,
+        ...userData
+      } = user.toObject();
 
-      return res.status(200).json({
-        appToken,
-        streamToken,
-        user: { ...userData },
-      });
+      return res
+        .status(200)
+        .json({ appToken, streamToken, user: { ...userData } });
     } catch (err) {
       res.status(500).json({ error: "Login failed." });
     }
@@ -119,26 +175,23 @@ export const authController = {
         return res.status(404).json({ message: "User not found." });
       }
 
-      // Generate a 6-digit OTP
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
-      const hashedOtp = CryptoJS.AES.encrypt(otp, SECRET as string).toString();
+      // Generate a 4-digit OTP
+      const otp = generateOTP();
 
-      // Save the hashed OTP and expiration to the user object
-      user.passwordResetToken = hashedOtp;
-      user.passwordResetExpires = new Date(Date.now() + 3600000); // 1 hour expiry
-      await user.save();
+      // Remove any existing reset token for the user
+      await ResetToken.findOneAndDelete({ owner: user._id }).exec();
 
-      // Send OTP email
-      const transporter = nodemailer.createTransport({
-        service: "gmail", // or your email service
-        auth: {
-          user: EMAIL_USER,
-          pass: EMAIL_PASS,
-        },
+      // Create a new reset token
+      const resetToken = new ResetToken({
+        owner: user._id,
+        token: otp,
       });
+      await resetToken.save();
 
+      // Send OTP email using the mailTransport function
+      const transporter = mailTransport();
       await transporter.sendMail({
-        from: '"Your App" <noreply@yourdomain.com>',
+        from: '"Your App" <noreply@careNavigator.com>',
         to: email,
         subject: "Your Password Reset OTP",
         text: `Your OTP for password reset is: ${otp}. It is valid for 1 hour.`,
@@ -152,79 +205,85 @@ export const authController = {
   },
 
   resetPassword: async (req: Request, res: Response) => {
-    const { otp, newPassword } = req.body;
+    const { email, otp, newPassword } = req.body;
 
-    if (!otp || !newPassword) {
-        return res.status(400).json({ message: "OTP and new password are required." });
+    if (!otp || !newPassword || !email) {
+      return res
+        .status(400)
+        .json({ message: "Email, OTP, and new password are required." });
     }
 
     if (newPassword.length < 6) {
-        return res.status(400).json({ message: "Password must be at least 6 characters." });
+      return res
+        .status(400)
+        .json({ message: "Password must be at least 6 characters." });
     }
 
     try {
-        const user = await User.findOne({
-            passwordResetToken: { $exists: true },
-            passwordResetExpires: { $gt: Date.now() }, // Ensure the OTP is still valid
-        }).exec();
+      const user = await User.findOne({ email }).exec();
+      if (!user) {
+        return res.status(404).json({ message: "User not found." });
+      }
 
-        if (!user) {
-            return res.status(400).json({ message: "Invalid or expired OTP." });
-        }
+      const resetToken = await ResetToken.findOne({ owner: user._id }).exec();
+      if (!resetToken) {
+        return res.status(400).json({ message: "Invalid or expired OTP." });
+      }
 
-        // Check if the passwordResetToken is defined before decrypting
-        if (!user.passwordResetToken) {
-            return res.status(400).json({ message: "Invalid or expired OTP." });
-        }
+      // Compare the provided OTP with the stored hashed token
+      const isValidOtp = await resetToken.compareToken(otp);
+      if (!isValidOtp) {
+        return res.status(400).json({ message: "Invalid OTP." });
+      }
 
-        // Decrypt the stored OTP
-        const decryptedOtp = CryptoJS.AES.decrypt(user.passwordResetToken, SECRET as string).toString(CryptoJS.enc.Utf8);
+      // Hash the new password and save it
+      const hashedPassword = CryptoJS.AES.encrypt(
+        newPassword,
+        SECRET as string
+      ).toString();
+      user.password = hashedPassword;
+      await user.save();
 
-        if (decryptedOtp !== otp) {
-            return res.status(400).json({ message: "Invalid OTP." });
-        }
+      // Remove the reset token after successful password reset
+      await ResetToken.findByIdAndDelete(resetToken._id);
 
-        // Hash the new password and save it
-        const hashedPassword = CryptoJS.AES.encrypt(newPassword, SECRET as string).toString();
-        user.password = hashedPassword;
-        user.passwordResetToken = undefined;  // Clear the OTP
-        user.passwordResetExpires = undefined; // Clear the expiration
-        await user.save();
-
-        res.status(200).json({ message: "Password reset successful." });
+      res.status(200).json({ message: "Password reset successful." });
     } catch (err) {
-        res.status(500).json({ error: "Password reset failed." });
+      res.status(500).json({ error: "Password reset failed." });
     }
-},
+  },
 
-verifyOtp: async (req: Request, res: Response) => {
-  const { email, otp } = req.body;
+  verifyOtp: async (req: Request, res: Response) => {
+    const { email, otp } = req.body;
 
-  if (!email || !otp) {
-    return res.status(400).json({ message: "Email and OTP are required." });
-  }
-
-  try {
-    const user = await User.findOne({ email }).exec();
-    if (!user) {
-      return res.status(404).json({ message: "User not found." });
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Email and OTP are required." });
     }
 
-    if (!user.passwordResetToken) {
-      return res.status(400).json({ message: "No OTP found or it has already been used." });
+    try {
+      // Find the user by email
+      const user = await User.findOne({ email }).exec();
+      if (!user) {
+        return res.status(404).json({ message: "User not found." });
+      }
+
+      // Find the OTP reset token associated with this user
+      const resetToken = await ResetToken.findOne({ owner: user._id }).exec();
+      if (!resetToken) {
+        return res
+          .status(400)
+          .json({ message: "No OTP found or it has already been used." });
+      }
+
+      // Compare the provided OTP with the stored token in ResetToken collection
+      const isValidOtp = await resetToken.compareToken(otp);
+      if (!isValidOtp) {
+        return res.status(400).json({ message: "Invalid OTP." });
+      }
+
+      res.status(200).json({ message: "OTP verified successfully." });
+    } catch (err) {
+      res.status(500).json({ error: "OTP verification failed." });
     }
-
-    const decryptedOtp = CryptoJS.AES.decrypt(user.passwordResetToken, SECRET as string).toString(CryptoJS.enc.Utf8);
-
-    if (decryptedOtp !== otp) {
-      return res.status(400).json({ message: "Invalid OTP." });
-    }
-
-    res.status(200).json({ message: "OTP verified successfully." });
-  } catch (err) {
-    res.status(500).json({ error: "OTP verification failed." });
-  }
-},
-  
-
+  },
 };

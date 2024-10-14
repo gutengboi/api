@@ -116,6 +116,7 @@ app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 // app.use("/api/auth", authRoutes);
 app.post("/register", authController.registerUser);
+app.post("/verify-registration-Otp", authController.verifyRegistrationOtp);
 app.post("/login", authController.loginUser);
 app.post("/forgot-password", authController.forgotPassword);
 app.post("/reset-password", authController.resetPassword);
