@@ -170,6 +170,7 @@ export const authController = {
     }
 
     try {
+      // Find user by email
       const user = await User.findOne({ email }).exec();
       if (!user) {
         return res.status(404).json({ message: "User not found." });
@@ -188,21 +189,30 @@ export const authController = {
       });
       await resetToken.save();
 
-      // Send OTP email using the mailTransport function
-      const transporter = mailTransport();
-      await transporter.sendMail({
-        from: '"Your App" <noreply@careNavigator.com>',
-        to: email,
-        subject: "Your Password Reset OTP",
-        text: `Your OTP for password reset is: ${otp}. It is valid for 1 hour.`,
-        html: `<p>Your OTP for password reset is: <b>${otp}</b>.</p><p>It is valid for 1 hour.</p>`,
-      });
+      try {
+        // Send OTP email using the mailTransport function
+        const transporter = mailTransport(); // Ensure this function is properly configured
+        await transporter.sendMail({
+          from: '"Your App" <noreply@careNavigator.com>',
+          to: email,
+          subject: "Your Password Reset OTP",
+          text: `Your OTP for password reset is: ${otp}. It is valid for 1 hour.`,
+          html: `<p>Your OTP for password reset is: <b>${otp}</b>.</p><p>It is valid for 1 hour.</p>`,
+        });
+        res.status(200).json({ message: "OTP sent to your email." });
+      } catch (emailError) {
+        // Log email sending error
+        console.error("Error sending OTP email:", emailError);
+        res.status(500).json({ error: "Failed to send OTP email." });
+      }
 
-      res.status(200).json({ message: "OTP sent to your email." });
     } catch (err) {
-      res.status(500).json({ error: "Failed to send OTP email." });
+      // Log error related to the database or OTP generation
+      console.error("Error in forgotPassword flow:", err);
+      res.status(500).json({ error: "An error occurred during the password reset process." });
     }
   },
+
 
   resetPassword: async (req: Request, res: Response) => {
     const { email, otp, newPassword } = req.body;
