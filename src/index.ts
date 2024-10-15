@@ -119,8 +119,9 @@ app.post("/register", authController.registerUser);
 app.post("/verify-registration-Otp", authController.verifyRegistrationOtp);
 app.post("/login", authController.loginUser);
 app.post("/forgot-password", authController.forgotPassword);
-app.post("/reset-password", authController.resetPassword);
 app.post("/verify-otp", authController.verifyOtp);
+app.post("/reset-password", authController.resetPassword);
+
 
 app.use("/api/users", userRoutes);
 
