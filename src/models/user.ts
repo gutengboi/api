@@ -9,6 +9,7 @@ export interface IUser extends Document {
   passwordResetExpires?: Date;
   createdAt: Date;
   updatedAt: Date;
+  __v?: number;
 }
 
 const UserSchema: Schema<IUser> = new Schema(
