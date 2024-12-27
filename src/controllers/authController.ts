@@ -296,4 +296,64 @@ export const authController = {
       res.status(500).json({ error: "OTP verification failed." });
     }
   },
+
+  createPin: async (req: Request, res: Response) => {
+    const { email, pin } = req.body;
+  
+    if (!email || !pin) {
+      return res.status(400).json({ message: "Email and PIN are required." });
+    }
+  
+    if (pin.length !== 4 || isNaN(Number(pin))) {
+      return res
+        .status(400)
+        .json({ message: "PIN must be a 4-digit numerical value." });
+    }
+  
+    try {
+      const user = await User.findOne({ email }).exec();
+      if (!user) {
+        return res.status(404).json({ message: "User not found." });
+      }
+  
+      // Encrypt and save the PIN
+      const encryptedPin = CryptoJS.AES.encrypt(pin, SECRET as string).toString();
+      user.pin = encryptedPin;
+      await user.save();
+  
+      res.status(200).json({ message: "PIN created successfully." });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to create PIN." });
+    }
+  },
+  
+  verifyPin: async (req: Request, res: Response) => {
+  const { email, pin } = req.body;
+
+  if (!email || !pin) {
+    return res.status(400).json({ message: "Email and PIN are required." });
+  }
+
+  try {
+    const user = await User.findOne({ email }).exec();
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    if (!user.pin) {
+      return res.status(403).json({ message: "No PIN set for this user." });
+    }
+
+    const decryptedPin = CryptoJS.AES.decrypt(user.pin, SECRET as string).toString(CryptoJS.enc.Utf8);
+
+    if (decryptedPin !== pin) {
+      return res.status(400).json({ message: "Invalid PIN." });
+    }
+
+    res.status(200).json({ message: "PIN verified successfully." });
+  } catch (err) {
+    res.status(500).json({ error: "PIN verification failed." });
+  }
+},
+
 };

@@ -7,6 +7,7 @@ export interface IUser extends Document {
   isVerified: Boolean;
   passwordResetToken?: string;
   passwordResetExpires?: Date;
+  pin?: string; 
   createdAt: Date;
   updatedAt: Date;
   __v?: number;
@@ -20,6 +21,7 @@ const UserSchema: Schema<IUser> = new Schema(
     isVerified: { type: Boolean, default: false },
     passwordResetToken: { type: String },
     passwordResetExpires: { type: Date },
+    pin: { type: String }, 
   },
   { timestamps: true }
 );
