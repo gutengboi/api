@@ -121,8 +121,10 @@ app.post("/login", authController.loginUser);
 app.post("/forgot-password", authController.forgotPassword);
 app.post("/verify-otp", authController.verifyOtp);
 app.post("/reset-password", authController.resetPassword);
-app.post("/create-pin", authController.createPin); // Add this route
+app.post("/create-pin", authController.createPin); 
 app.post("/verify-pin", authController.verifyPin);
+app.post("/forgot-pin", authController.forgotPin);
+app.post("/reset-pin", authController.resetPin);
 
 app.use("/api/users", userRoutes);
 

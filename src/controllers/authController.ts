@@ -354,6 +354,99 @@ export const authController = {
   } catch (err) {
     res.status(500).json({ error: "PIN verification failed." });
   }
-},
+  },
+
+  forgotPin: async (req: Request, res: Response) => {
+    const { email } = req.body;
+  
+    if (!email) {
+      return res.status(400).json({ message: "Email is required." });
+    }
+  
+    try {
+      // Find the user by email
+      const user = await User.findOne({ email }).exec();
+      if (!user) {
+        return res.status(404).json({ message: "User not found." });
+      }
+  
+      // Generate a 4-digit OTP
+      const otp = generateOTP();
+  
+      // Remove any existing reset token for this user
+      await ResetToken.findOneAndDelete({ owner: user._id }).exec();
+  
+      // Create a new reset token
+      const resetToken = new ResetToken({
+        owner: user._id,
+        token: otp,
+      });
+      await resetToken.save();
+  
+      try {
+        // Send OTP email using the configured mail transporter
+        const transporter = mailTransport();
+        await transporter.sendMail({
+          from: '"Your App" <noreply@careNavigator.com>',
+          to: email,
+          subject: "Your PIN Reset OTP",
+          text: `Your OTP for PIN reset is: ${otp}. It is valid for 1 hour.`,
+          html: `<p>Your OTP for PIN reset is: <b>${otp}</b>.</p><p>It is valid for 1 hour.</p>`,
+        });
+  
+        res.status(200).json({ message: "OTP sent to your email." });
+      } catch (emailError) {
+        console.error("Error sending OTP email:", emailError);
+        res.status(500).json({ error: "Failed to send OTP email." });
+      }
+    } catch (err) {
+      console.error("Error in forgotPin flow:", err);
+      res.status(500).json({ error: "An error occurred during the PIN reset process." });
+    }
+  },
+  
+  resetPin: async (req: Request, res: Response) => {
+    const { email, otp, newPin } = req.body;
+  
+    if (!email || !otp || !newPin) {
+      return res.status(400).json({ message: "Email, OTP, and new PIN are required." });
+    }
+  
+    if (newPin.length !== 4 || isNaN(Number(newPin))) {
+      return res
+        .status(400)
+        .json({ message: "PIN must be a 4-digit numerical value." });
+    }
+  
+    try {
+      const user = await User.findOne({ email }).exec();
+      if (!user) {
+        return res.status(404).json({ message: "User not found." });
+      }
+  
+      const resetToken = await ResetToken.findOne({ owner: user._id }).exec();
+      if (!resetToken) {
+        return res.status(400).json({ message: "Invalid or expired OTP." });
+      }
+  
+      const isValidOtp = await resetToken.compareToken(otp);
+      if (!isValidOtp) {
+        return res.status(400).json({ message: "Invalid OTP." });
+      }
+  
+      // Encrypt and save the new PIN
+      const encryptedPin = CryptoJS.AES.encrypt(newPin, SECRET as string).toString();
+      user.pin = encryptedPin;
+      await user.save();
+  
+      // Remove the reset token after successful PIN reset
+      await ResetToken.findByIdAndDelete(resetToken._id);
+  
+      res.status(200).json({ message: "PIN reset successfully." });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to reset PIN." });
+    }
+  },
+  
 
 };
